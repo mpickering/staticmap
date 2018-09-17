@@ -6,6 +6,20 @@ from math import sqrt, log, tan, pi, cos, ceil, floor, atan, sinh
 
 import requests
 from PIL import Image, ImageDraw
+import gdal
+import osr
+import shapely.geometry
+import numpy as np
+import math
+
+class Geoimage:
+    def __init__(self, extent, image, rot=0):
+        self.extent = extent
+        self.image = image
+        self.rot = rot
+
+    def extent (self):
+        return self.extent
 
 
 class Line:
@@ -102,7 +116,7 @@ class Polygon:
     :type simplify: bool
     """
 
-    def __init__(self, coords, fill_color, outline_color, simplify=True):
+    def __init__(self, coords, fill_color="blue", outline_color="blue", simplify=True):
         self.coords = coords
         self.fill_color = fill_color
         self.outline_color = outline_color
@@ -179,8 +193,8 @@ def _simplify(points, tolerance=11):
 
 
 class StaticMap:
-    def __init__(self, width, height, padding_x=0, padding_y=0, url_template="http://a.tile.komoot.de/komoot-2/{z}/{x}/{y}.png", tile_size=256, tile_request_timeout=None, headers=None, reverse_y=False, background_color="#fff",
-                 delay_between_retries=0):
+    def __init__(self, width, height, padding_x=0, padding_y=0, url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png", tile_size=256, tile_request_timeout=None, headers=None, reverse_y=False, background_color="#fff",
+                 delay_between_retries=10):
         """
         :param width: map width in pixel
         :type width: int
@@ -219,6 +233,7 @@ class StaticMap:
         self.markers = []
         self.lines = []
         self.polygons = []
+        self.geoimages = []
 
         # fields that get set when map is rendered
         self.x_center = 0
@@ -226,6 +241,9 @@ class StaticMap:
         self.zoom = 0
 
         self.delay_between_retries = delay_between_retries
+
+    def add_image(self, geoimage):
+        self.geoimages.append(geoimage)
 
     def add_line(self, line):
         """
@@ -260,8 +278,6 @@ class StaticMap:
         :rtype: Image.Image
         """
 
-        if not self.lines and not self.markers and not self.polygons and not (center and zoom):
-            raise RuntimeError("cannot render empty map, add lines / markers / polygons first")
 
         if zoom is None:
             self.zoom = self._calculate_zoom()
@@ -320,6 +336,8 @@ class StaticMap:
 
         extents += [p.extent for p in self.polygons]
 
+        extents += [p.extent for p in self.geoimages]
+
         return (
             min(e[0] for e in extents),
             min(e[1] for e in extents),
@@ -371,6 +389,9 @@ class StaticMap:
         """
         px = (y - self.y_center) * self.tile_size + self.height / 2
         return int(round(px))
+
+    def _coord_to_px(self, xy):
+        return (_x_to_px(xy[0]), _y_to_px(xy[1]))
 
     def _draw_base_layer(self, image):
         """
@@ -495,6 +516,24 @@ class StaticMap:
 
         image_lines = image_lines.resize((self.width, self.height), Image.ANTIALIAS)
 
+        # Paste each geoimage onto the base image
+        for geoimage in self.geoimages:
+            ex = geoimage.extent
+            px_extent = (self._x_to_px(_lon_to_x(ex[0], self.zoom))
+                        , self._y_to_px(_lat_to_y(ex[1], self.zoom))
+                        , self._x_to_px(_lon_to_x(ex[2], self.zoom))
+                        , self._y_to_px(_lat_to_y(ex[3], self.zoom)))
+            #new_image = geoimage.image.resize((px_extent[2]-px_extent[0], px_extent[3]-px_extent[1]))
+            print(px_extent)
+            print(ex)
+            im = geoimage.image
+            geoimage.image = geoimage.image.rotate(geoimage.rot, expand=True)
+            geoimage.image.save("rotated.png")
+            new_image=geoimage.image.resize((abs(px_extent[0]-px_extent[2]),abs(px_extent[1] - px_extent[3])))
+            mask = background = Image.new('L', new_image.size , 128)
+            image.paste(new_image, (px_extent[0], px_extent[3]), mask)
+            #image.paste(new_image, (px_extent[0], px_extent[4]) , new_image)
+
         # merge lines with base image
         image.paste(image_lines, (0, 0), image_lines)
 
@@ -507,9 +546,91 @@ class StaticMap:
             image.paste(icon.img, position, icon.img)
 
 
+def GetExtent(gt,cols,rows):
+    ''' Return list of corner coordinates from a geotransform
+
+        @type gt:   C{tuple/list}
+        @param gt: geotransform
+        @type cols:   C{int}
+        @param cols: number of columns in the dataset
+        @type rows:   C{int}
+        @param rows: number of rows in the dataset
+        @rtype:    C{[float,...,float]}
+        @return:   coordinates of each corner
+    '''
+    ext=[]
+    xarr=[0,cols]
+    yarr=[0,rows]
+
+    for px in xarr:
+        for py in yarr:
+            x=gt[0]+(px*gt[1])+(py*gt[2])
+            y=gt[3]+(px*gt[4])+(py*gt[5])
+            ext.append([x,y])
+        yarr.reverse()
+    return ext
+
+def ReprojectCoords(coords,src_srs,tgt_srs):
+    ''' Reproject a list of x,y coordinates.
+
+        @type geom:     C{tuple/list}
+        @param geom:    List of [[x,y],...[x,y]] coordinates
+        @type src_srs:  C{osr.SpatialReference}
+        @param src_srs: OSR SpatialReference object
+        @type tgt_srs:  C{osr.SpatialReference}
+        @param tgt_srs: OSR SpatialReference object
+        @rtype:         C{tuple/list}
+        @return:        List of transformed [[x,y],...[x,y]] coordinates
+    '''
+    trans_coords=[]
+    transform = osr.CoordinateTransformation( src_srs, tgt_srs)
+    for x,y in coords:
+        x,y,z = transform.TransformPoint(x,y)
+        trans_coords.append([x,y])
+    return trans_coords
+
+def MakePolygon(raster):
+    ds=gdal.Open(raster)
+    gt=ds.GetGeoTransform()
+    cols = ds.RasterXSize
+    rows = ds.RasterYSize
+    rot = math.tan(gt[2]/gt[1]) * (180/ math.pi)
+    ext=GetExtent(gt,cols,rows)
+
+    src_srs=osr.SpatialReference()
+    src_srs.ImportFromEPSG(3857)
+    tgt_srs=osr.SpatialReference()
+    tgt_srs.ImportFromEPSG(4326)
+
+    geo_ext=ReprojectCoords(ext,src_srs,tgt_srs)
+
+    # Approximately 2km buffer
+    lat_buffer_factor = (2/111)
+    long_buffer_factor = (2/73)
+
+    return (shapely.geometry.Polygon(geo_ext), ds, rot)
+
+
 if __name__ == '__main__':
-    map = StaticMap(300, 400, 10)
-    line = Line([(13.4, 52.5), (2.3, 48.9)], 'blue', 3)
-    map.add_line(line)
+    map = StaticMap(3000, 4000, 7)
+
+
+    p,ds, rot = MakePolygon("54.jpg")
+    print(rot)
+    print(p)
+    print(p.bounds)
+    print(p.envelope.bounds)
+    print(p.envelope)
+
+    #map.add_polygon(Polygon(p.exterior.coords))
+
+    #map.add_polygon(Polygon(p.envelope.exterior.coords, fill_color="red"))
+
+#
+    myarray = np.array(ds.GetRasterBand(1).ReadAsArray())
+    test_image = Image.fromarray(myarray).convert("RGBA")
+    gi = Geoimage(p.bounds, test_image, rot)
+    map.add_image(gi)
+
     image = map.render()
     image.save('berlin_paris.png')
