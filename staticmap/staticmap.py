@@ -523,7 +523,6 @@ class StaticMap:
             print(px_extent)
             print(ex)
             im = geoimage.image
-            geoimage.image.save("rotated.png")
             new_image=geoimage.image.resize((abs(px_extent[0]-px_extent[2]),abs(px_extent[1] - px_extent[3])))
             mask = background = Image.new('L', new_image.size , 128)
             image.paste(new_image, (px_extent[0], px_extent[3]), mask)
