@@ -6,7 +6,6 @@ from math import sqrt, log, tan, pi, cos, ceil, floor, atan, sinh
 
 import requests
 from PIL import Image, ImageDraw
-from osgeo import gdal, osr
 import shapely.geometry
 import numpy as np
 import math
@@ -567,52 +566,58 @@ def GetExtent(gt,cols,rows):
         yarr.reverse()
     return ext
 
-def ReprojectCoords(coords,src_srs,tgt_srs):
-    ''' Reproject a list of x,y coordinates.
+def MetersToLatLon(mx, my ):
+    "Converts XY point from Spherical Mercator EPSG:900913 to lat/lon in WGS84 Datum"
+    originShift = 2 * math.pi * 6378137 / 2.0
 
-        @type geom:     C{tuple/list}
-        @param geom:    List of [[x,y],...[x,y]] coordinates
-        @type src_srs:  C{osr.SpatialReference}
-        @param src_srs: OSR SpatialReference object
-        @type tgt_srs:  C{osr.SpatialReference}
-        @param tgt_srs: OSR SpatialReference object
-        @rtype:         C{tuple/list}
-        @return:        List of transformed [[x,y],...[x,y]] coordinates
-    '''
+    lon = (mx / originShift) * 180.0
+    lat = (my / originShift) * 180.0
+    print(mx, my, lon)
+
+    lat = 180 / math.pi * (2 * math.atan( math.exp( lat * math.pi / 180.0)) - math.pi / 2.0)
+    return lat, lon
+
+
+def reproject(x, y):
+    return MetersToLatLon(x, y)
+
+def ReprojectCoords(coords):
     trans_coords=[]
-    transform = osr.CoordinateTransformation( src_srs, tgt_srs)
     for x,y in coords:
-        x,y,z = transform.TransformPoint(x,y)
+        x,y = reproject(x,y)
         trans_coords.append([x,y])
     return trans_coords
 
-def MakePolygon(raster):
-    ds=gdal.Open(raster)
-    gt=ds.GetGeoTransform()
-    cols = ds.RasterXSize
-    rows = ds.RasterYSize
+
+
+
+
+def MakePolygon(gt, cols, rows):
     rot = math.tan(gt[2]/gt[1]) * (180/ math.pi)
+    gt = [gt[4], gt[0], gt[2], gt[5], gt[3], gt[1]]
     ext=GetExtent(gt,cols,rows)
+    print(ext)
 
-    src_srs=osr.SpatialReference()
-    src_srs.ImportFromEPSG(3857)
-    tgt_srs=osr.SpatialReference()
-    tgt_srs.ImportFromEPSG(4326)
+    geo_ext=ReprojectCoords(ext)
 
-    geo_ext=ReprojectCoords(ext,src_srs,tgt_srs)
-
-    # Approximately 2km buffer
-    lat_buffer_factor = (2/111)
-    long_buffer_factor = (2/73)
-
-    return (shapely.geometry.Polygon(geo_ext), ds, rot)
+    return (shapely.geometry.Polygon(geo_ext), rot)
 
 
 if __name__ == '__main__':
     map = StaticMap(3000, 4000, 7)
 
 
-    p,ds, rot = MakePolygon("54.jpg")
+    with open("54.jgw") as f:
+        content = f.readlines()
+    # you may also want to remove whitespace characters like `\n` at the end of each line
+    gt = [float(x.strip()) for x in content]
+    print(gt)
+
+    im = Image.open("54.jpg")
+    cols, rows = im.size
+
+
+    p, rot = MakePolygon(gt, cols, rows)
     print(rot)
     print(p)
     print(p.bounds)
@@ -624,8 +629,7 @@ if __name__ == '__main__':
     #map.add_polygon(Polygon(p.envelope.exterior.coords, fill_color="red"))
 
 #
-    myarray = np.array(ds.GetRasterBand(1).ReadAsArray())
-    test_image = Image.fromarray(myarray).convert("RGBA").rotate(rot, expand=True)
+    test_image = im.convert("RGBA").rotate(rot, expand=True)
 
     gi = Geoimage(p.bounds, test_image)
     map.add_image(gi)
