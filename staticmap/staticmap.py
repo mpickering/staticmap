@@ -13,10 +13,9 @@ import numpy as np
 import math
 
 class Geoimage:
-    def __init__(self, extent, image, rot=0):
+    def __init__(self, extent, image):
         self.extent = extent
         self.image = image
-        self.rot = rot
 
     def extent (self):
         return self.extent
@@ -527,7 +526,6 @@ class StaticMap:
             print(px_extent)
             print(ex)
             im = geoimage.image
-            geoimage.image = geoimage.image.rotate(geoimage.rot, expand=True)
             geoimage.image.save("rotated.png")
             new_image=geoimage.image.resize((abs(px_extent[0]-px_extent[2]),abs(px_extent[1] - px_extent[3])))
             mask = background = Image.new('L', new_image.size , 128)
@@ -628,8 +626,9 @@ if __name__ == '__main__':
 
 #
     myarray = np.array(ds.GetRasterBand(1).ReadAsArray())
-    test_image = Image.fromarray(myarray).convert("RGBA")
-    gi = Geoimage(p.bounds, test_image, rot)
+    test_image = Image.fromarray(myarray).convert("RGBA").rotate(rot, expand=True)
+
+    gi = Geoimage(p.bounds, test_image)
     map.add_image(gi)
 
     image = map.render()
