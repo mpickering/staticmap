@@ -7,7 +7,6 @@ from math import sqrt, log, tan, pi, cos, ceil, floor, atan, sinh
 import requests
 from PIL import Image, ImageDraw
 import shapely.geometry
-import numpy as np
 import math
 
 class Geoimage:
