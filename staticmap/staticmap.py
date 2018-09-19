@@ -555,7 +555,7 @@ def GetExtent(gt,cols,rows):
     ext=[]
     xarr=[0,cols]
     yarr=[0,rows]
-
+    print(gt)
     for px in xarr:
         for py in yarr:
             x=gt[0]+(px*gt[1])+(py*gt[2])
@@ -573,7 +573,7 @@ def MetersToLatLon(mx, my ):
     print(mx, my, lon)
 
     lat = 180 / math.pi * (2 * math.atan( math.exp( lat * math.pi / 180.0)) - math.pi / 2.0)
-    return lat, lon
+    return lon, lat
 
 
 def reproject(x, y):
@@ -586,17 +586,14 @@ def ReprojectCoords(coords):
         trans_coords.append([x,y])
     return trans_coords
 
-
-
-
-
 def MakePolygon(gt, cols, rows):
-    rot = math.tan(gt[2]/gt[1]) * (180/ math.pi)
-    gt = [gt[4], gt[0], gt[2], gt[5], gt[3], gt[1]]
+    rot = math.tan(gt[1]/gt[0]) * (180/ math.pi)
+    gt = [gt[4], gt[0], gt[2], gt[5], gt[1], gt[3]]
     ext=GetExtent(gt,cols,rows)
     print(ext)
 
     geo_ext=ReprojectCoords(ext)
+    print(geo_ext)
 
     return (shapely.geometry.Polygon(geo_ext), rot)
 
